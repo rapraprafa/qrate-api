@@ -10,8 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
-from pathlib import Path
 import os
+from pathlib import Path
+from corsheaders.defaults import default_headers
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,9 +41,17 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "oauth2_provider",
     "qr",
     "organization",
+    "account.apps.AccountConfig",
 ]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "account.authentication.CookieOrHeaderOAuth2Authentication",
+    ]
+}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -127,7 +137,36 @@ USE_I18N = True
 
 USE_TZ = True
 
-CORS_ORIGIN_ALLOW_ALL = True
+def _split_csv(value):
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+FRONTEND_ORIGINS = _split_csv(config("FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://192.168.0.44:5173"))
+
+CORS_ORIGIN_ALLOW_ALL = False
+CORS_ALLOWED_ORIGINS = FRONTEND_ORIGINS
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = FRONTEND_ORIGINS
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "x-application-name",
+]
+
+AUTH_COOKIE_ACCESS_NAME = config("AUTH_COOKIE_ACCESS_NAME", "access_token")
+AUTH_COOKIE_REFRESH_NAME = config("AUTH_COOKIE_REFRESH_NAME", "refresh_token")
+AUTH_COOKIE_ACCESS_MAX_AGE_SECONDS = int(config("AUTH_COOKIE_ACCESS_MAX_AGE_SECONDS", "900"))
+AUTH_COOKIE_REFRESH_MAX_AGE_SECONDS = int(config("AUTH_COOKIE_REFRESH_MAX_AGE_SECONDS", str(60 * 60 * 24 * 7)))
+AUTH_COOKIE_SAMESITE = config("AUTH_COOKIE_SAMESITE", None)
+AUTH_COOKIE_SECURE = config("AUTH_COOKIE_SECURE", "true").lower() == "true"
+CSRF_COOKIE_NAME = config("CSRF_COOKIE_NAME", "csrf_token")
+CSRF_COOKIE_AGE = int(config("CSRF_COOKIE_AGE", "31449600"))
+CSRF_COOKIE_PATH = config("CSRF_COOKIE_PATH", "/")
+CSRF_COOKIE_DOMAIN=None
+CSRF_COOKIE_HTTPONLY = config("CSRF_COOKIE_HTTPONLY", "false").lower() == "true"
+CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
+CSRF_COOKIE_SECURE = AUTH_COOKIE_SECURE
 
 
 # Static files (CSS, JavaScript, Images)

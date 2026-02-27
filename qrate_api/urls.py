@@ -19,9 +19,11 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from qr.views import QRCodeViewSet
+from account.views import AccountViewSet
 
 router = DefaultRouter()
 router.register("qr", QRCodeViewSet, basename="qr")
+router.register("account", AccountViewSet, basename="account")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
