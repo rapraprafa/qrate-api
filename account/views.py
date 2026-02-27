@@ -31,9 +31,9 @@ class AccountViewSet(ViewSet):
     @staticmethod
     def _get_cookie_config():
         return {
-            "access_name": getattr(settings, "AUTH_COOKIE_ACCESS_NAME", "access_token"),
-            "refresh_name": getattr(settings, "AUTH_COOKIE_REFRESH_NAME", "refresh_token"),
-            "csrf_name": getattr(settings, "CSRF_COOKIE_NAME", "csrf_token"),
+            "access_name": getattr(settings, "AUTH_COOKIE_ACCESS_NAME", "qrate-staff-access-token"),
+            "refresh_name": getattr(settings, "AUTH_COOKIE_REFRESH_NAME", "qrate-staff-refresh-token"),
+            "csrf_name": getattr(settings, "CSRF_COOKIE_NAME", "qrate-staff-csrf-token"),
             "access_max_age": getattr(settings, "AUTH_COOKIE_ACCESS_MAX_AGE_SECONDS", 900),
             "refresh_max_age": getattr(settings, "AUTH_COOKIE_REFRESH_MAX_AGE_SECONDS", 60 * 60 * 24 * 7),
             "csrf_max_age": getattr(settings, "CSRF_COOKIE_AGE", 31449600),
@@ -420,7 +420,7 @@ class AccountViewSet(ViewSet):
         return refresh_response
 
     @action(methods=["GET"], detail=False, permission_classes=[IsAuthenticated])
-    def me(self, request):
+    def staff_details(self, request):
         staff_details = self._serialize_staff_details(request.user)
         if staff_details is None:
             return ResponseUtils.send_error_response(HTTP_400_BAD_REQUEST, "No account associated with this user.")
