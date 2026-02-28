@@ -7,6 +7,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from qr.models import QRCode
 from organization.models import Organization
+from utils.response_utils import ResponseUtils
+from utils.security_utils import SecurityUtils
+from rest_framework.status import HTTP_403_FORBIDDEN
 
 
 CACHE_KEY_LIST_VERSION = "qr:list_qr_codes:version"
@@ -33,6 +36,9 @@ class QRCodeViewSet(ViewSet):
         payload = request.GET
 
         org_id = payload.get("org_id")
+        if not SecurityUtils.is_staff_an_org_member(request.user, org_id):
+            return ResponseUtils.send_error_response(HTTP_403_FORBIDDEN, "You do not have permission to view QR codes for this organization.")
+
         # user = request.user # based on access token (oauth2, to be implemented later)
         # Note: need to implement security checks if user is a part of the organization
 

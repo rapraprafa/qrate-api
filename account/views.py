@@ -12,6 +12,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.contrib.auth import authenticate, logout
 from django.contrib.auth.models import User
+from django.db.models import Q
 from django.utils.crypto import constant_time_compare
 from rest_framework.permissions import IsAuthenticated
 from qr.models import QRCode
@@ -19,13 +20,28 @@ from account.models import Account, AccountInvite
 from datetime import timedelta
 from uuid import uuid4
 from oauth2_provider.models import AccessToken, Application, RefreshToken
+from utils.security_utils import SecurityUtils
 from oauthlib.common import generate_token
 from utils.response_utils import ResponseUtils
-from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED
+from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 
 # Create your views here.
 
 # TODO - Implement permission classes for this viewset, e.g. only allow requests from a specific host (qrate-staff-portal)
+CACHE_KEY_LIST_STAFF_ACCOUNTS_VERSION = "account:list_staff_accounts:version"
+STAFF_LIST_CACHE_TTL_SECONDS = 60
+
+
+def _get_staff_list_cache_version():
+    return cache.get_or_set(CACHE_KEY_LIST_STAFF_ACCOUNTS_VERSION, 1, timeout=None)
+
+
+def _bump_staff_list_cache_version():
+    try:
+        cache.incr(CACHE_KEY_LIST_STAFF_ACCOUNTS_VERSION)
+    except ValueError:
+        current = cache.get(CACHE_KEY_LIST_STAFF_ACCOUNTS_VERSION, 1)
+        cache.set(CACHE_KEY_LIST_STAFF_ACCOUNTS_VERSION, int(current) + 1, timeout=None)
 
 class AccountViewSet(ViewSet):
     @staticmethod
@@ -157,7 +173,6 @@ class AccountViewSet(ViewSet):
             return ResponseUtils.send_error_response(HTTP_400_BAD_REQUEST, "Missing required fields.")
 
         email = email.strip()
-        password = password.strip()
         first_name = first_name.strip()
         last_name = last_name.strip()
 
@@ -169,7 +184,11 @@ class AccountViewSet(ViewSet):
         user_instance = User.objects.create_user(username=email, email=email, first_name=first_name, last_name=last_name)
         account_instance = Account.objects.create(user=user_instance, organization_id=org_id)
 
-        # function to send email invitation to the new staff member to be implemented later, email should contain a link to set up their account and create a password
+        # Add an entry in the AccountInvite model with the generated UUID and link it to the account instance, this will be used to verify the staff invite and allow them to set up their password
+        AccountInvite.objects.create(account=account_instance, invite_uuid=account_invite_uuid)
+        _bump_staff_list_cache_version()
+
+        # TODO: function to send email invitation to the new staff member to be implemented later, email should contain a link that has the invite UUID to set up their account and create a password
 
         return Response(
             {
@@ -418,6 +437,119 @@ class AccountViewSet(ViewSet):
         )
         self._set_token_cookies(refresh_response, new_access_token, new_refresh_token, request)
         return refresh_response
+
+    @action(methods=["GET"], detail=False)
+    def list_staff_accounts(self, request):
+        payload = request.GET
+
+        def parse_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        org_id = payload.get("org_id")
+        if not SecurityUtils.is_staff_an_org_admin(request.user, org_id):
+            return ResponseUtils.send_error_response(HTTP_403_FORBIDDEN, "You do not have permission to view staff accounts.")
+
+        if not org_id and request.user and request.user.is_authenticated:
+            request_account = Account.objects.filter(user=request.user).first()
+            if not request_account.is_admin:
+                return ResponseUtils.send_error_response(HTTP_403_FORBIDDEN, "You do not have permission to view staff accounts.")
+            if request_account is not None:
+                org_id = request_account.organization_id
+
+        if not org_id:
+            return ResponseUtils.send_error_response(HTTP_400_BAD_REQUEST, "Missing org_id.")
+
+        draw = max(parse_int(payload.get("draw"), 1), 1)
+        start = max(parse_int(payload.get("start"), 0), 0)
+        length = parse_int(payload.get("length"), 12)
+        if length <= 0:
+            length = 12
+        length = min(length, 100)
+
+        search_term = (payload.get("search") or "").strip()
+        order_by = (payload.get("order_by") or "email").strip()
+        order_dir = (payload.get("order_dir") or "asc").strip().lower()
+
+        allowed_order_fields = {
+            "id": "user__id",
+            "email": "user__email",
+            "first_name": "user__first_name",
+            "last_name": "user__last_name",
+            "is_admin": "is_admin",
+            "created_at": "created_at",
+            "updated_at": "updated_at",
+        }
+        if order_by not in allowed_order_fields:
+            order_by = "email"
+        if order_dir not in {"asc", "desc"}:
+            order_dir = "asc"
+
+        cache_payload = {
+            "org_id": str(org_id),
+            "start": start,
+            "length": length,
+            "search": search_term,
+            "order_by": order_by,
+            "order_dir": order_dir,
+            "version": _get_staff_list_cache_version(),
+        }
+        cache_suffix = hashlib.md5(
+            json.dumps(cache_payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        cache_key = f"account:list_staff_accounts:{cache_suffix}"
+        cached_response = cache.get(cache_key)
+        if cached_response is not None:
+            cached_response["draw"] = draw
+            return Response(cached_response)
+
+        base_qs = Account.objects.select_related("user").filter(organization_id=org_id)
+        records_total = base_qs.count()
+
+        filtered_qs = base_qs
+        if search_term:
+            search_filter = (
+                Q(user__email__icontains=search_term)
+                | Q(user__first_name__icontains=search_term)
+                | Q(user__last_name__icontains=search_term)
+                | Q(user__username__icontains=search_term)
+            )
+
+            normalized_search = search_term.lower()
+            if normalized_search in {"admin", "true", "yes", "1"}:
+                search_filter |= Q(is_admin=True)
+            elif normalized_search in {"staff", "false", "no", "0"}:
+                search_filter |= Q(is_admin=False)
+
+            filtered_qs = filtered_qs.filter(search_filter)
+
+        records_filtered = filtered_qs.count()
+
+        resolved_order_field = allowed_order_fields[order_by]
+        ordering = f"-{resolved_order_field}" if order_dir == "desc" else resolved_order_field
+        paginated_qs = filtered_qs.order_by(ordering, "user__id")[start : start + length]
+
+        records = [
+            {
+                "id": account.user.id,
+                "email": account.user.email,
+                "first_name": account.user.first_name,
+                "last_name": account.user.last_name,
+                "is_admin": account.is_admin,
+            }
+            for account in paginated_qs
+        ]
+
+        response_payload = {
+            "draw": draw,
+            "recordsTotal": records_total,
+            "recordsFiltered": records_filtered,
+            "records": records,
+        }
+        cache.set(cache_key, response_payload.copy(), timeout=STAFF_LIST_CACHE_TTL_SECONDS)
+        return Response(response_payload)
 
     @action(methods=["GET"], detail=False, permission_classes=[IsAuthenticated])
     def staff_details(self, request):

@@ -16,10 +16,9 @@ class CookieOrHeaderOAuth2Authentication(OAuth2Authentication):
         if auth_result is not None:
             return auth_result
 
-        cookie_name = getattr(settings, "AUTH_COOKIE_ACCESS_NAME", "access_token")
+        access_token_cookie_name = getattr(settings, "AUTH_COOKIE_ACCESS_NAME", "access_token")
 
-        raw_token = request.COOKIES.get(cookie_name)
-        print(request.path, raw_token)
+        raw_token = request.COOKIES.get(access_token_cookie_name)
         if not raw_token:
             raise exceptions.NotAuthenticated("Authentication credentials were not provided.")
 

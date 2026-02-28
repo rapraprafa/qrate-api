@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from django.db import models
 from django.contrib.auth.models import User
 
@@ -16,11 +18,11 @@ class Account(models.Model):
 
 
 class AccountInvite(models.Model):
-    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='account_invites')
-    invite_uuid = models.UUIDField(unique=True)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='invite_account')
+    invite_uuid = models.UUIDField(default=uuid4, unique=True, editable=False)
     is_used = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Invite for {self.email} to join {self.account.organization.org_name}"
+        return f"Invite for {self.account.user.username} to join {self.account.organization.org_name}"
